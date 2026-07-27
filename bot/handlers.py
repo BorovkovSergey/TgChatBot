@@ -39,7 +39,11 @@ router.chat_member.filter(F.chat.type.in_(_GROUPS))
 
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
-    member = await bot.get_chat_member(chat_id, user_id)
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+    except TelegramAPIError as e:
+        logger.warning("get_chat_member(%s, %s) failed: %s", chat_id, user_id, e)
+        return False
     return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
 
 
@@ -93,13 +97,20 @@ async def on_ban_button(query: CallbackQuery, bot: Bot, store: SettingsStore) ->
         return
 
     action, user_id = query.data.split(":", 1)
+    if not user_id.isdigit():
+        await query.answer("Некорректные данные кнопки", show_alert=True)
+        return
     admin = query.from_user.full_name
     if action == "ban":
         settings = store.get(message.chat.id)
         result = await _ban(bot, message.chat.id, int(user_id), "пользователь", settings.ban_seconds)
-        await message.edit_text(f"{message.html_text}\n{result} (админ: {admin})")
+        new_text = f"{message.html_text}\n{result} (админ: {admin})"
     else:
-        await message.edit_text(f"{message.html_text}\nПропущен (админ: {admin}).")
+        new_text = f"{message.html_text}\nПропущен (админ: {admin})."
+    try:
+        await message.edit_text(new_text)
+    except TelegramAPIError as e:
+        logger.warning("edit_text failed in chat %s: %s", message.chat.id, e)
     await query.answer()
 
 
