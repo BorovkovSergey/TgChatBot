@@ -3,8 +3,10 @@
 import asyncio
 import logging
 import random
+from collections import defaultdict
 from dataclasses import replace
 from datetime import timedelta
+from typing import DefaultDict
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
@@ -50,14 +52,15 @@ async def _reply(message: Message, text: str) -> None:
 
 # Polling handles updates as parallel tasks: on a mass leave every handler
 # would hit flood control, sleep the same retry_after and retry in lockstep.
-# The lock serializes bans, the cap and jitter spread the retries out.
-_ban_lock = asyncio.Lock()
+# Per-chat locks serialize bans within a chat (Telegram flood limits are
+# mostly per-chat), the cap and jitter spread the retries out.
+_ban_locks: DefaultDict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 _RETRY_AFTER_CAP = 60
 
 
 async def _ban_with_retry(bot: Bot, chat_id: int, user_id: int, ban_seconds: int) -> None:
     until = timedelta(seconds=ban_seconds)
-    async with _ban_lock:
+    async with _ban_locks[chat_id]:
         try:
             await bot.ban_chat_member(chat_id, user_id, until_date=until)
         except TelegramRetryAfter as e:
@@ -100,6 +103,16 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
             bot,
             event.chat.id,
             f"{user.mention_html()} покинул(а) чат (админ — без бана).",
+        )
+        return
+    if event.chat.type == ChatType.GROUP:
+        # until_date applies only in supergroups/channels; here the ban
+        # would silently become permanent while we promise a temporary one
+        await _announce(
+            bot,
+            event.chat.id,
+            f"{user.mention_html()} покинул(а) чат. Не баню: обычная группа "
+            f"не поддерживает временный бан — преобразуй её в супергруппу.",
         )
         return
     ban_seconds = store.get(event.chat.id).ban_seconds

@@ -192,6 +192,28 @@ class TestOnMemberLeft:
         assert "флуд" in text.lower()
         assert "права" not in text.lower()
 
+    def test_ban_locks_are_per_chat(self):
+        from bot.handlers import _ban_locks
+
+        assert _ban_locks[-1] is _ban_locks[-1]
+        assert _ban_locks[-1] is not _ban_locks[-2]
+
+    def test_basic_group_leaver_not_banned(self, tmp_path):
+        # until_date works only in supergroups/channels; a ban in a basic
+        # group would silently become permanent
+        bot = AsyncMock()
+        group = Chat(id=-200, type="group")
+        event = ChatMemberUpdated(
+            chat=group,
+            from_user=USER,
+            date=DATE,
+            old_chat_member=ChatMemberMember(user=USER),
+            new_chat_member=ChatMemberLeft(user=USER),
+        )
+        asyncio.run(on_member_left(event, bot, make_store(tmp_path)))
+        bot.ban_chat_member.assert_not_awaited()
+        assert "супергрупп" in bot.send_message.await_args.args[1]
+
     def test_ban_retry_sleep_capped_with_jitter(self, tmp_path, monkeypatch):
         # N parallel handlers must not retry in lockstep with a huge delay
         sleeps = self._patch_sleep(monkeypatch)
