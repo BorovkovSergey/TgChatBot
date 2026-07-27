@@ -40,6 +40,18 @@ class TestPersistence:
         store = SettingsStore(path)
         assert store.get(-1).ban_seconds == 86400
 
+    def test_unreadable_file_fails_startup(self, tmp_path):
+        # A transient read error must not silently start with an empty store:
+        # the first save would wipe every other chat's settings on disk.
+        path = tmp_path / "settings.json"
+        path.write_text('{"-1": {"ban_seconds": 3600}}')
+        path.chmod(0o000)
+        try:
+            with pytest.raises(OSError):
+                SettingsStore(path)
+        finally:
+            path.chmod(0o600)
+
     def test_file_with_unknown_fields_falls_back_to_defaults(self, tmp_path):
         path = tmp_path / "settings.json"
         path.write_text('{"-1": {"mode": "manual", "ban_seconds": 60}}')

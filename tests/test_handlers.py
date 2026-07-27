@@ -97,7 +97,7 @@ class TestOnMemberLeft:
             CHAT.id, USER.id, until_date=timedelta(seconds=86400)
         )
         args = bot.send_message.await_args.args
-        assert "Забанен на 1d" in args[1]
+        assert "бан на 1d" in args[1]
 
     def test_leaving_bot_ignored(self, tmp_path):
         bot = AsyncMock()
@@ -141,7 +141,7 @@ class TestOnMemberLeft:
         bot.ban_chat_member.assert_awaited_once_with(
             CHAT.id, USER.id, until_date=timedelta(seconds=3600)
         )
-        assert "Забанен на 1h" in bot.send_message.await_args.args[1]
+        assert "бан на 1h" in bot.send_message.await_args.args[1]
 
     def test_leaving_admin_not_banned(self, tmp_path):
         bot = AsyncMock()
@@ -155,8 +155,8 @@ class TestOnMemberLeft:
         asyncio.run(on_member_left(event, bot, make_store(tmp_path)))
         bot.ban_chat_member.assert_not_awaited()
         text = bot.send_message.await_args.args[1]
-        assert "вышел из чата" in text
-        assert "Забанен" not in text
+        assert "покинул(а) чат" in text
+        assert "без бана" in text
 
     def test_send_failure_does_not_raise(self, tmp_path):
         bot = AsyncMock()
@@ -169,7 +169,7 @@ class TestOnMemberLeft:
         bot.ban_chat_member.side_effect = [flood, None]
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
         assert bot.ban_chat_member.await_count == 2
-        assert "Забанен" in bot.send_message.await_args.args[1]
+        assert "бан на" in bot.send_message.await_args.args[1]
 
     def test_ban_retry_failure_announced(self, tmp_path):
         bot = AsyncMock()
@@ -178,6 +178,24 @@ class TestOnMemberLeft:
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
         assert bot.ban_chat_member.await_count == 2
         assert "Не смог забанить" in bot.send_message.await_args.args[1]
+
+
+class TestMigration:
+    def test_settings_follow_supergroup_upgrade(self, tmp_path):
+        from bot.handlers import on_migrate
+        from bot.settings import ChatSettings
+
+        store = make_store(tmp_path)
+        store.set(CHAT.id, ChatSettings(ban_seconds=3600))
+        message = Message(
+            message_id=1,
+            date=DATE,
+            chat=CHAT,
+            from_user=USER,
+            migrate_to_chat_id=-100999,
+        )
+        asyncio.run(on_migrate(message, store))
+        assert store.get(-100999).ban_seconds == 3600
 
 
 class TestPrivateStart:

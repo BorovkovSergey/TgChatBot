@@ -11,7 +11,7 @@ class TestParseDuration:
             ("45m", 45 * 60),
             ("2h", 2 * 3600),
             ("3d", 3 * 86400),
-            ("366d", 366 * 86400),
+            ("365d", 365 * 86400),
             ("1D", 86400),
             (" 2h ", 2 * 3600),
         ],
@@ -30,9 +30,11 @@ class TestParseDuration:
         with pytest.raises(DurationError):
             parse_duration("59s")
 
-    def test_above_telegram_maximum(self):
+    def test_above_maximum(self):
+        # 365d ceiling: Telegram's limit is 366d, clock skew past it would
+        # make the ban permanent
         with pytest.raises(DurationError):
-            parse_duration("367d")
+            parse_duration("366d")
 
 
 class TestFormatDuration:

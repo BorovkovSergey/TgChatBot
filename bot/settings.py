@@ -11,11 +11,12 @@ from typing import Dict, Union
 
 logger = logging.getLogger(__name__)
 
-# Telegram treats until_date outside 30s..366d as a permanent ban. The floor
-# is 60s: near 30s, network latency and clock skew between the host and
-# Telegram can push until_date under the limit and make the ban permanent.
+# Telegram treats until_date outside 30s..366d as a permanent ban. Both
+# bounds keep a margin: near the limits, network latency and clock skew
+# between the host and Telegram can push until_date over the edge and make
+# the ban permanent.
 MIN_BAN_SECONDS = 60
-MAX_BAN_SECONDS = 366 * 86400
+MAX_BAN_SECONDS = 365 * 86400
 
 DEFAULT_BAN_SECONDS = 86400
 
@@ -35,7 +36,7 @@ def parse_duration(text: str) -> int:
         )
     seconds = int(match.group(1)) * _UNITS[match.group(2).lower()]
     if not MIN_BAN_SECONDS <= seconds <= MAX_BAN_SECONDS:
-        raise DurationError("Срок должен быть от 1 минуты до 366 дней")
+        raise DurationError("Срок должен быть от 1 минуты до 365 дней")
     return seconds
 
 
@@ -88,8 +89,11 @@ class SettingsStore:
         except FileNotFoundError:
             return {}
         except OSError as e:
-            logger.warning("Cannot read %s: %s", self._path, e)
-            return {}
+            # Fail fast: starting with an empty store on a transient read
+            # error (EACCES, EIO on a bind mount) would let the first save
+            # wipe every other chat's settings that are intact on disk.
+            logger.error("Cannot read %s: %s", self._path, e)
+            raise
         try:
             raw = json.loads(text)
             if not isinstance(raw, dict):
@@ -140,9 +144,19 @@ class SettingsStore:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self._path)
+            self._fsync_dir()
         except BaseException:
             self._discard(tmp)
             raise
+
+    def _fsync_dir(self) -> None:
+        # Persist the rename itself: without this a power loss right after
+        # os.replace can roll the directory entry back to the old file.
+        dir_fd = os.open(self._path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
     @staticmethod
     def _discard(tmp: str) -> None:

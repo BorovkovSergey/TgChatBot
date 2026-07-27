@@ -90,7 +90,7 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
         await _announce(
             bot,
             event.chat.id,
-            f"{user.mention_html()} вышел из чата (был админом — без бана).",
+            f"{user.mention_html()} покинул(а) чат (админ — без бана).",
         )
         return
     ban_seconds = store.get(event.chat.id).ban_seconds
@@ -99,15 +99,21 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
     except TelegramAPIError as e:
         logger.warning("Failed to ban %s in %s: %s", user.id, event.chat.id, e)
         text = (
-            f"{user.mention_html()} вышел из чата. "
+            f"{user.mention_html()} покинул(а) чат. "
             f"Не смог забанить — проверь права бота (детали в логах)."
         )
     else:
         text = (
-            f"{user.mention_html()} вышел из чата. "
-            f"Забанен на {format_duration(ban_seconds)}."
+            f"{user.mention_html()} покинул(а) чат — "
+            f"бан на {format_duration(ban_seconds)}."
         )
     await _announce(bot, event.chat.id, text)
+
+
+@router.message(F.migrate_to_chat_id)
+async def on_migrate(message: Message, store: SettingsStore) -> None:
+    # Group upgraded to supergroup: chat id changes, carry the settings over.
+    store.set(message.migrate_to_chat_id, store.get(message.chat.id))
 
 
 async def _require_admin(message: Message, bot: Bot) -> bool:
