@@ -140,3 +140,11 @@ class TestPersistence:
         path.write_text("{not json")
         SettingsStore(path)
         assert (tmp_path / "settings.json.bak").read_text() == "{not json"
+
+    def test_existing_backup_not_overwritten(self, tmp_path):
+        path = tmp_path / "settings.json"
+        backup = tmp_path / "settings.json.bak"
+        backup.write_text("{first corruption")
+        path.write_text("{second corruption")
+        SettingsStore(path)
+        assert backup.read_text() == "{first corruption"

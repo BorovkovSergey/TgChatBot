@@ -48,6 +48,7 @@ class TestFormatDuration:
             (3 * 86400, "3d"),
             (90 * 60, "1h 30m"),
             (86400 + 3600, "1d 1h"),
+            (0, "0s"),
         ],
     )
     def test_format(self, seconds, expected):

@@ -9,7 +9,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllPrivateChats,
+)
 
 from bot.handlers import private_router, router
 from bot.settings import SettingsStore
@@ -40,11 +44,18 @@ async def main() -> None:
             ],
             scope=BotCommandScopeAllChatAdministrators(),
         )
+        await bot.set_my_commands(
+            [BotCommand(command="start", description="Как настроить бота")],
+            scope=BotCommandScopeAllPrivateChats(),
+        )
     except TelegramAPIError as e:
         logging.getLogger(__name__).warning("set_my_commands failed: %s", e)
 
     # Derived from registered handlers; must include "chat_member", without
     # it Telegram never delivers member-leave events, even to an admin bot.
+    # Pending updates are deliberately NOT dropped: Telegram queues them for
+    # up to 24h, so members who left while the bot was down still get banned
+    # after a restart.
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 

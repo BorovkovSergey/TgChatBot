@@ -205,13 +205,6 @@ class TestOnMemberLeft:
             _ban_locks.pop(-1, None)
             _ban_locks.pop(-2, None)
 
-    def test_ban_lock_removed_after_use(self, tmp_path):
-        from bot.handlers import _ban_locks
-
-        bot = AsyncMock()
-        asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
-        assert CHAT.id not in _ban_locks
-
     def test_basic_group_leaver_not_banned(self, tmp_path):
         # until_date works only in supergroups/channels; a ban in a basic
         # group would silently become permanent

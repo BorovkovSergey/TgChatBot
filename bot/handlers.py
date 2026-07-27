@@ -54,32 +54,27 @@ async def _reply(message: Message, text: str) -> None:
 # would hit flood control, sleep the same retry_after and retry in lockstep.
 # Per-chat locks serialize bans within a chat (Telegram flood limits are
 # mostly per-chat), the cap and jitter spread the retries out.
+# Entries are never removed: growth is bounded by the number of chats, and
+# safe removal would need CPython lock internals (_waiters) with no contract.
 _ban_locks: DefaultDict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 _RETRY_AFTER_CAP = 60
 
 
 async def _ban_with_retry(bot: Bot, chat_id: int, user_id: int, ban_seconds: int) -> None:
     until = timedelta(seconds=ban_seconds)
-    lock = _ban_locks[chat_id]
-    try:
-        async with lock:
-            try:
-                await bot.ban_chat_member(chat_id, user_id, until_date=until)
-            except TelegramRetryAfter as e:
-                delay = min(e.retry_after, _RETRY_AFTER_CAP) + random.uniform(0, 1)
-                logger.info(
-                    "Flood limit banning %s in %s, retrying in %.1fs",
-                    user_id,
-                    chat_id,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-                await bot.ban_chat_member(chat_id, user_id, until_date=until)
-    finally:
-        # Keep the dict from growing one lock per chat forever; only drop
-        # the entry when nobody holds or awaits it.
-        if not lock.locked() and not getattr(lock, "_waiters", None):
-            _ban_locks.pop(chat_id, None)
+    async with _ban_locks[chat_id]:
+        try:
+            await bot.ban_chat_member(chat_id, user_id, until_date=until)
+        except TelegramRetryAfter as e:
+            delay = min(e.retry_after, _RETRY_AFTER_CAP) + random.uniform(0, 1)
+            logger.info(
+                "Flood limit banning %s in %s, retrying in %.1fs",
+                user_id,
+                chat_id,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            await bot.ban_chat_member(chat_id, user_id, until_date=until)
 
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:

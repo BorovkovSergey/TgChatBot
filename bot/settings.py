@@ -107,6 +107,17 @@ class SettingsStore:
                 raise ValueError("settings root must be an object")
         except ValueError as e:
             backup = self._path.with_name(self._path.name + ".bak")
+            if backup.exists():
+                # Keep the oldest corrupt snapshot — it is closest to the
+                # last good state.
+                logger.warning(
+                    "Corrupt settings file %s (%s); backup %s already exists, "
+                    "keeping the older one",
+                    self._path,
+                    e,
+                    backup,
+                )
+                return {}
             logger.warning(
                 "Corrupt settings file %s (%s), moving it to %s", self._path, e, backup
             )
