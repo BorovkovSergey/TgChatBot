@@ -8,6 +8,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators
 
 from bot.handlers import router
@@ -28,13 +29,18 @@ async def main() -> None:
     dp = Dispatcher(store=store)
     dp.include_router(router)
 
-    await bot.set_my_commands(
-        [
-            BotCommand(command="bantime", description="Срок бана: 30m, 2h, 3d"),
-            BotCommand(command="status", description="Текущие настройки"),
-        ],
-        scope=BotCommandScopeAllChatAdministrators(),
-    )
+    # The command menu is a nicety: a startup hiccup here must not crash the
+    # bot into a docker restart loop.
+    try:
+        await bot.set_my_commands(
+            [
+                BotCommand(command="bantime", description="Срок бана: 30m, 2h, 3d"),
+                BotCommand(command="status", description="Текущие настройки"),
+            ],
+            scope=BotCommandScopeAllChatAdministrators(),
+        )
+    except TelegramAPIError as e:
+        logging.getLogger(__name__).warning("set_my_commands failed: %s", e)
 
     # Without "chat_member" in allowed_updates Telegram never delivers
     # member-leave events, even to an admin bot.

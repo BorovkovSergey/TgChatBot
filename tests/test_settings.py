@@ -57,6 +57,15 @@ class TestPersistence:
         path.write_text('{"-1": {"ban_seconds": 5}}')
         assert SettingsStore(path).get(-1).ban_seconds == 86400
 
+    def test_save_failure_keeps_memory_and_does_not_raise(self, tmp_path):
+        store = make_store(tmp_path)
+        tmp_path.chmod(0o500)
+        try:
+            store.set(-1, ChatSettings(ban_seconds=3600))
+            assert store.get(-1).ban_seconds == 3600
+        finally:
+            tmp_path.chmod(0o700)
+
     def test_corrupt_file_backed_up(self, tmp_path):
         path = tmp_path / "settings.json"
         path.write_text("{not json")

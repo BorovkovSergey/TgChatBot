@@ -70,7 +70,24 @@ class TestOnMemberLeft:
         bot = AsyncMock()
         bot.ban_chat_member.side_effect = API_ERROR
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
-        assert "Не смог забанить" in bot.send_message.await_args.args[1]
+        text = bot.send_message.await_args.args[1]
+        assert "Не смог забанить" in text
+        assert "Not enough rights" not in text  # raw API details stay in logs
+
+    def test_leaving_admin_not_banned(self, tmp_path):
+        bot = AsyncMock()
+        event = ChatMemberUpdated(
+            chat=CHAT,
+            from_user=USER,
+            date=DATE,
+            old_chat_member=ADMIN,
+            new_chat_member=ChatMemberLeft(user=USER),
+        )
+        asyncio.run(on_member_left(event, bot, make_store(tmp_path)))
+        bot.ban_chat_member.assert_not_awaited()
+        text = bot.send_message.await_args.args[1]
+        assert "вышел из чата" in text
+        assert "Забанен" not in text
 
     def test_send_failure_does_not_raise(self, tmp_path):
         bot = AsyncMock()

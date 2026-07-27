@@ -7,7 +7,7 @@ import re
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Union
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class ChatSettings:
 
 
 class SettingsStore:
-    def __init__(self, path):
+    def __init__(self, path: Union[str, "os.PathLike[str]"]):
         self._path = Path(path)
         self._settings: Dict[int, ChatSettings] = self._load()
 
@@ -61,7 +61,10 @@ class SettingsStore:
 
     def set(self, chat_id: int, settings: ChatSettings) -> None:
         self._settings[chat_id] = settings
-        self._save()
+        try:
+            self._save()
+        except OSError as e:
+            logger.error("Cannot persist settings to %s: %s", self._path, e)
 
     def _load(self) -> Dict[int, ChatSettings]:
         try:

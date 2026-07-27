@@ -45,6 +45,16 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
     user: User = event.old_chat_member.user
     if user.is_bot:
         return
+    if event.old_chat_member.status in (
+        ChatMemberStatus.ADMINISTRATOR,
+        ChatMemberStatus.CREATOR,
+    ):
+        text = f"{user.mention_html()} вышел из чата (был админом — без бана)."
+        try:
+            await bot.send_message(event.chat.id, text)
+        except TelegramAPIError as e:
+            logger.warning("Failed to announce in chat %s: %s", event.chat.id, e)
+        return
     ban_seconds = store.get(event.chat.id).ban_seconds
     try:
         await bot.ban_chat_member(
@@ -52,7 +62,10 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
         )
     except TelegramAPIError as e:
         logger.warning("Failed to ban %s in %s: %s", user.id, event.chat.id, e)
-        text = f"{user.mention_html()} вышел из чата. Не смог забанить: {e.message}"
+        text = (
+            f"{user.mention_html()} вышел из чата. "
+            f"Не смог забанить — проверь права бота (детали в логах)."
+        )
     else:
         text = (
             f"{user.mention_html()} вышел из чата. "
