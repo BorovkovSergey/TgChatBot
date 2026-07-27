@@ -12,7 +12,9 @@ DOCKER="sudo docker"
 cd "$(dirname "$0")"
 
 echo "==> Syncing sources to $REMOTE:$REMOTE_DIR"
-ssh "$REMOTE" "mkdir -p $REMOTE_DIR"
+# data/ must exist before compose bind-mounts it, otherwise docker creates it
+# root-owned and the non-root container user cannot write settings
+ssh "$REMOTE" "mkdir -p $REMOTE_DIR/data"
 rsync -az --delete --exclude '__pycache__' bot "$REMOTE:$REMOTE_DIR/"
 rsync -az Dockerfile docker-compose.yml requirements.txt "$REMOTE:$REMOTE_DIR/"
 

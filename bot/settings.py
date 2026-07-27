@@ -1,12 +1,15 @@
 """Per-chat settings storage and ban-duration parsing."""
 
 import json
+import logging
 import os
 import re
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict
+
+logger = logging.getLogger(__name__)
 
 # Telegram treats until_date outside this range as a permanent ban.
 MIN_BAN_SECONDS = 30
@@ -62,10 +65,37 @@ class SettingsStore:
 
     def _load(self) -> Dict[int, ChatSettings]:
         try:
-            raw = json.loads(self._path.read_text())
-            return {int(chat_id): ChatSettings(**data) for chat_id, data in raw.items()}
-        except (OSError, ValueError, TypeError):
+            text = self._path.read_text()
+        except FileNotFoundError:
             return {}
+        except OSError as e:
+            logger.warning("Cannot read %s: %s", self._path, e)
+            return {}
+        try:
+            raw = json.loads(text)
+            if not isinstance(raw, dict):
+                raise ValueError("settings root must be an object")
+        except ValueError as e:
+            backup = self._path.with_name(self._path.name + ".bak")
+            logger.warning(
+                "Corrupt settings file %s (%s), moving it to %s", self._path, e, backup
+            )
+            try:
+                os.replace(self._path, backup)
+            except OSError as move_error:
+                logger.warning("Cannot back up %s: %s", self._path, move_error)
+            return {}
+
+        settings = {}
+        for chat_id, data in raw.items():
+            try:
+                entry = ChatSettings(**data)
+                if not MIN_BAN_SECONDS <= entry.ban_seconds <= MAX_BAN_SECONDS:
+                    raise ValueError(f"ban_seconds {entry.ban_seconds!r} out of range")
+                settings[int(chat_id)] = entry
+            except (TypeError, ValueError) as e:
+                logger.warning("Skipping bad settings entry %r: %s", chat_id, e)
+        return settings
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +104,8 @@ class SettingsStore:
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self._path)
         except BaseException:
             os.unlink(tmp)

@@ -58,10 +58,16 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
             f"{user.mention_html()} вышел из чата. "
             f"Забанен на {format_duration(ban_seconds)}."
         )
-    await bot.send_message(event.chat.id, text)
+    try:
+        await bot.send_message(event.chat.id, text)
+    except TelegramAPIError as e:
+        logger.warning("Failed to announce in chat %s: %s", event.chat.id, e)
 
 
 async def _require_admin(message: Message, bot: Bot) -> bool:
+    # Anonymous chat admins post on behalf of the chat itself.
+    if message.sender_chat is not None and message.sender_chat.id == message.chat.id:
+        return True
     if message.from_user is None:
         return False
     if not await _is_admin(bot, message.chat.id, message.from_user.id):

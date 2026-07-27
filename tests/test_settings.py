@@ -42,3 +42,23 @@ class TestPersistence:
         path = tmp_path / "settings.json"
         path.write_text('{"-1": {"mode": "manual", "ban_seconds": 60}}')
         assert SettingsStore(path).get(-1).ban_seconds == 86400
+
+    def test_bad_entry_does_not_drop_good_ones(self, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text(
+            '{"-1": {"ban_seconds": 3600}, "-2": {"unknown_field": true}}'
+        )
+        store = SettingsStore(path)
+        assert store.get(-1).ban_seconds == 3600
+        assert store.get(-2).ban_seconds == 86400
+
+    def test_out_of_range_ban_seconds_ignored(self, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text('{"-1": {"ban_seconds": 5}}')
+        assert SettingsStore(path).get(-1).ban_seconds == 86400
+
+    def test_corrupt_file_backed_up(self, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text("{not json")
+        SettingsStore(path)
+        assert (tmp_path / "settings.json.bak").read_text() == "{not json"
