@@ -181,14 +181,16 @@ class TestOnMemberLeft:
         assert bot.ban_chat_member.await_count == 2
         assert "бан на" in bot.send_message.await_args.args[1]
 
-    def test_ban_retry_failure_announced(self, tmp_path, monkeypatch):
+    def test_ban_retry_failure_blames_flood_not_rights(self, tmp_path, monkeypatch):
         self._patch_sleep(monkeypatch)
         bot = AsyncMock()
         flood = TelegramRetryAfter(method=None, message="flood", retry_after=1)
         bot.ban_chat_member.side_effect = [flood, flood]
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
         assert bot.ban_chat_member.await_count == 2
-        assert "Не смог забанить" in bot.send_message.await_args.args[1]
+        text = bot.send_message.await_args.args[1]
+        assert "флуд" in text.lower()
+        assert "права" not in text.lower()
 
     def test_ban_retry_sleep_capped_with_jitter(self, tmp_path, monkeypatch):
         # N parallel handlers must not retry in lockstep with a huge delay
@@ -243,6 +245,17 @@ class TestPrivateStart:
         ).as_(bot)
         asyncio.run(cmd_start(message))
         assert "групп" in sent_text(bot)
+
+    def test_other_private_messages_get_fallback(self):
+        from bot.handlers import private_fallback
+
+        bot = AsyncMock()
+        private_chat = Chat(id=42, type="private")
+        message = Message(
+            message_id=1, date=DATE, chat=private_chat, from_user=USER, text="/status"
+        ).as_(bot)
+        asyncio.run(private_fallback(message))
+        assert "в группе" in sent_text(bot)
 
 
 class TestIsAdmin:

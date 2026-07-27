@@ -105,6 +105,12 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
     ban_seconds = store.get(event.chat.id).ban_seconds
     try:
         await _ban_with_retry(bot, event.chat.id, user.id, ban_seconds)
+    except TelegramRetryAfter as e:
+        logger.warning("Flood limit banning %s in %s: %s", user.id, event.chat.id, e)
+        text = (
+            f"{user.mention_html()} покинул(а) чат. "
+            f"Не забанил из-за флуд-лимита Telegram — забань вручную."
+        )
     except TelegramAPIError as e:
         logger.warning("Failed to ban %s in %s: %s", user.id, event.chat.id, e)
         text = (
@@ -178,3 +184,8 @@ async def cmd_start(message: Message) -> None:
         "Добавь меня в группу и назначь админом с правом «Ban users».\n"
         "Команды в группе (для админов): /bantime 2h, /status.",
     )
+
+
+@private_router.message()
+async def private_fallback(message: Message) -> None:
+    await _reply(message, "Команды работают только в группе. Инструкция: /start")

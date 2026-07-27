@@ -132,6 +132,10 @@ class SettingsStore:
         return settings
 
     def _save(self) -> None:
+        # Deliberately synchronous (blocks the event loop for the write and
+        # two fsyncs): the single-threaded loop is what serializes store
+        # access. Offloading to a thread would trade a rare millisecond-level
+        # pause on a tiny file for real concurrent-write races.
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {str(chat_id): asdict(s) for chat_id, s in self._settings.items()}
         # Own prefix so startup cleanup never touches foreign temp files if

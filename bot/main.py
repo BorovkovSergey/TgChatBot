@@ -43,9 +43,9 @@ async def main() -> None:
     except TelegramAPIError as e:
         logging.getLogger(__name__).warning("set_my_commands failed: %s", e)
 
-    # Without "chat_member" in allowed_updates Telegram never delivers
-    # member-leave events, even to an admin bot.
-    await dp.start_polling(bot, allowed_updates=["message", "chat_member"])
+    # Derived from registered handlers; must include "chat_member", without
+    # it Telegram never delivers member-leave events, even to an admin bot.
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
 if __name__ == "__main__":
