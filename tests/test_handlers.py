@@ -1,6 +1,9 @@
 import asyncio
+import os
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
+
+import pytest
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import CommandObject
@@ -45,9 +48,9 @@ def leave_event(user=USER):
     )
 
 
-def make_message(sender_chat=None, from_user=USER):
+def make_message(sender_chat=None, from_user=USER, chat=CHAT):
     return Message(
-        message_id=1, date=DATE, chat=CHAT, from_user=from_user, sender_chat=sender_chat
+        message_id=1, date=DATE, chat=chat, from_user=from_user, sender_chat=sender_chat
     )
 
 
@@ -195,8 +198,19 @@ class TestOnMemberLeft:
     def test_ban_locks_are_per_chat(self):
         from bot.handlers import _ban_locks
 
-        assert _ban_locks[-1] is _ban_locks[-1]
-        assert _ban_locks[-1] is not _ban_locks[-2]
+        try:
+            assert _ban_locks[-1] is _ban_locks[-1]
+            assert _ban_locks[-1] is not _ban_locks[-2]
+        finally:
+            _ban_locks.pop(-1, None)
+            _ban_locks.pop(-2, None)
+
+    def test_ban_lock_removed_after_use(self, tmp_path):
+        from bot.handlers import _ban_locks
+
+        bot = AsyncMock()
+        asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
+        assert CHAT.id not in _ban_locks
 
     def test_basic_group_leaver_not_banned(self, tmp_path):
         # until_date works only in supergroups/channels; a ban in a basic
@@ -334,6 +348,7 @@ class TestCommands:
         message = make_message().as_(bot)
         asyncio.run(cmd_status(message, bot, make_store(tmp_path)))
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
     def test_bantime_warns_when_save_fails(self, tmp_path):
         bot = AsyncMock()
         bot.get_chat_member.return_value = ADMIN
@@ -348,6 +363,33 @@ class TestCommands:
             assert "не сохранил" in text.lower()
         finally:
             tmp_path.chmod(0o700)
+
+    def test_bantime_warns_in_basic_group(self, tmp_path):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = ADMIN
+        group = Chat(id=-200, type="group")
+        message = make_message(chat=group).as_(bot)
+        command = CommandObject(command="bantime", args="2h")
+        asyncio.run(cmd_bantime(message, command, bot, make_store(tmp_path)))
+        text = sent_text(bot)
+        assert "Срок бана установлен" in text
+        assert "супергрупп" in text
+
+    def test_status_warns_in_basic_group(self, tmp_path):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = ADMIN
+        group = Chat(id=-200, type="group")
+        message = make_message(chat=group).as_(bot)
+        asyncio.run(cmd_status(message, bot, make_store(tmp_path)))
+        assert "супергрупп" in sent_text(bot)
+
+    def test_bantime_no_warning_in_supergroup(self, tmp_path):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = ADMIN
+        message = make_message().as_(bot)
+        command = CommandObject(command="bantime", args="2h")
+        asyncio.run(cmd_bantime(message, command, bot, make_store(tmp_path)))
+        assert "супергрупп" not in sent_text(bot)
 
     def test_bantime_rejects_bad_duration(self, tmp_path):
         bot = AsyncMock()

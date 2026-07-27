@@ -1,6 +1,12 @@
+import os
+
 import pytest
 
 from bot.settings import ChatSettings, SettingsStore
+
+needs_permission_checks = pytest.mark.skipif(
+    os.geteuid() == 0, reason="root ignores file permissions"
+)
 
 
 def make_store(tmp_path):
@@ -52,6 +58,7 @@ class TestPersistence:
         store = SettingsStore(path)
         assert store.get(-1).ban_seconds == 86400
 
+    @needs_permission_checks
     def test_unreadable_file_fails_startup(self, tmp_path):
         # A transient read error must not silently start with an empty store:
         # the first save would wipe every other chat's settings on disk.
@@ -101,6 +108,7 @@ class TestPersistence:
         make_store(tmp_path)
         assert foreign.exists()
 
+    @needs_permission_checks
     def test_save_failure_keeps_memory_and_does_not_raise(self, tmp_path):
         store = make_store(tmp_path)
         tmp_path.chmod(0o500)

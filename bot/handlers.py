@@ -60,19 +60,26 @@ _RETRY_AFTER_CAP = 60
 
 async def _ban_with_retry(bot: Bot, chat_id: int, user_id: int, ban_seconds: int) -> None:
     until = timedelta(seconds=ban_seconds)
-    async with _ban_locks[chat_id]:
-        try:
-            await bot.ban_chat_member(chat_id, user_id, until_date=until)
-        except TelegramRetryAfter as e:
-            delay = min(e.retry_after, _RETRY_AFTER_CAP) + random.uniform(0, 1)
-            logger.info(
-                "Flood limit banning %s in %s, retrying in %.1fs",
-                user_id,
-                chat_id,
-                delay,
-            )
-            await asyncio.sleep(delay)
-            await bot.ban_chat_member(chat_id, user_id, until_date=until)
+    lock = _ban_locks[chat_id]
+    try:
+        async with lock:
+            try:
+                await bot.ban_chat_member(chat_id, user_id, until_date=until)
+            except TelegramRetryAfter as e:
+                delay = min(e.retry_after, _RETRY_AFTER_CAP) + random.uniform(0, 1)
+                logger.info(
+                    "Flood limit banning %s in %s, retrying in %.1fs",
+                    user_id,
+                    chat_id,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                await bot.ban_chat_member(chat_id, user_id, until_date=until)
+    finally:
+        # Keep the dict from growing one lock per chat forever; only drop
+        # the entry when nobody holds or awaits it.
+        if not lock.locked() and not getattr(lock, "_waiters", None):
+            _ban_locks.pop(chat_id, None)
 
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
@@ -144,6 +151,18 @@ async def on_migrate(message: Message, store: SettingsStore) -> None:
     store.migrate(message.chat.id, message.migrate_to_chat_id)
 
 
+# Settings still get saved in a basic group: they carry over via on_migrate
+# once the group is upgraded.
+_BASIC_GROUP_WARNING = (
+    "\n⚠️ Это обычная группа — временный бан здесь не работает, "
+    "преобразуй её в супергруппу."
+)
+
+
+def _group_warning(message: Message) -> str:
+    return _BASIC_GROUP_WARNING if message.chat.type == ChatType.GROUP else ""
+
+
 async def _require_admin(message: Message, bot: Bot) -> bool:
     # Anonymous chat admins post on behalf of the chat itself.
     if message.sender_chat is not None and message.sender_chat.id == message.chat.id:
@@ -173,7 +192,7 @@ async def cmd_bantime(
     text = f"Срок бана установлен: {format_duration(seconds)}"
     if not saved:
         text += "\n⚠️ Не сохранилось на диск — после рестарта бота настройка пропадёт."
-    await _reply(message, text)
+    await _reply(message, text + _group_warning(message))
 
 
 @router.message(Command("status"))
@@ -181,7 +200,9 @@ async def cmd_status(message: Message, bot: Bot, store: SettingsStore) -> None:
     if not await _require_admin(message, bot):
         return
     await _reply(
-        message, f"Срок бана: {format_duration(store.get(message.chat.id).ban_seconds)}"
+        message,
+        f"Срок бана: {format_duration(store.get(message.chat.id).ban_seconds)}"
+        + _group_warning(message),
     )
 
 
