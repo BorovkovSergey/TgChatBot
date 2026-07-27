@@ -11,7 +11,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators
 
-from bot.handlers import router
+from bot.handlers import private_router, router
 from bot.settings import SettingsStore
 
 
@@ -28,6 +28,7 @@ async def main() -> None:
     bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(store=store)
     dp.include_router(router)
+    dp.include_router(private_router)
 
     # The command menu is a nicety: a startup hiccup here must not crash the
     # bot into a docker restart loop.

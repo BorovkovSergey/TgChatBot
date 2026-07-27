@@ -1,12 +1,13 @@
 """Handlers: leave tracking with auto-ban, admin commands."""
 
+import asyncio
 import logging
 from dataclasses import replace
 from datetime import timedelta
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.filters import (
     IS_MEMBER,
     LEFT,
@@ -37,6 +38,29 @@ async def _announce(bot: Bot, chat_id: int, text: str) -> None:
         await bot.send_message(chat_id, text)
     except TelegramAPIError as e:
         logger.warning("Failed to announce in chat %s: %s", chat_id, e)
+
+
+async def _reply(message: Message, text: str) -> None:
+    try:
+        await message.reply(text)
+    except TelegramAPIError as e:
+        logger.warning("Failed to reply in chat %s: %s", message.chat.id, e)
+
+
+async def _ban_with_retry(bot: Bot, chat_id: int, user_id: int, ban_seconds: int) -> None:
+    until = timedelta(seconds=ban_seconds)
+    try:
+        await bot.ban_chat_member(chat_id, user_id, until_date=until)
+    except TelegramRetryAfter as e:
+        # Mass leave hits flood control; one retry after the advised pause.
+        logger.info(
+            "Flood limit banning %s in %s, retrying in %ss",
+            user_id,
+            chat_id,
+            e.retry_after,
+        )
+        await asyncio.sleep(e.retry_after)
+        await bot.ban_chat_member(chat_id, user_id, until_date=until)
 
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
@@ -71,9 +95,7 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
         return
     ban_seconds = store.get(event.chat.id).ban_seconds
     try:
-        await bot.ban_chat_member(
-            event.chat.id, user.id, until_date=timedelta(seconds=ban_seconds)
-        )
+        await _ban_with_retry(bot, event.chat.id, user.id, ban_seconds)
     except TelegramAPIError as e:
         logger.warning("Failed to ban %s in %s: %s", user.id, event.chat.id, e)
         text = (
@@ -95,7 +117,7 @@ async def _require_admin(message: Message, bot: Bot) -> bool:
     if message.from_user is None or not await _is_admin(
         bot, message.chat.id, message.from_user.id
     ):
-        await message.reply("Команда только для админов.")
+        await _reply(message, "Команда только для админов.")
         return False
     return True
 
@@ -109,16 +131,35 @@ async def cmd_bantime(
     try:
         seconds = parse_duration(command.args or "")
     except DurationError as e:
-        await message.reply(f"{e}. Использование: /bantime 30m|2h|3d")
+        await _reply(message, f"{e}. Использование: /bantime 30m|2h|3d")
         return
-    store.set(message.chat.id, replace(store.get(message.chat.id), ban_seconds=seconds))
-    await message.reply(f"Срок бана установлен: {format_duration(seconds)}")
+    saved = store.set(
+        message.chat.id, replace(store.get(message.chat.id), ban_seconds=seconds)
+    )
+    text = f"Срок бана установлен: {format_duration(seconds)}"
+    if not saved:
+        text += "\n⚠️ Не сохранилось на диск — после рестарта бота настройка пропадёт."
+    await _reply(message, text)
 
 
 @router.message(Command("status"))
 async def cmd_status(message: Message, bot: Bot, store: SettingsStore) -> None:
     if not await _require_admin(message, bot):
         return
-    await message.reply(
-        f"Срок бана: {format_duration(store.get(message.chat.id).ban_seconds)}"
+    await _reply(
+        message, f"Срок бана: {format_duration(store.get(message.chat.id).ban_seconds)}"
+    )
+
+
+private_router = Router()
+private_router.message.filter(F.chat.type == ChatType.PRIVATE)
+
+
+@private_router.message(Command("start"))
+async def cmd_start(message: Message) -> None:
+    await _reply(
+        message,
+        "Я слежу за вышедшими из группы и баню их на время.\n"
+        "Добавь меня в группу и назначь админом с правом «Ban users».\n"
+        "Команды в группе (для админов): /bantime 2h, /status.",
     )

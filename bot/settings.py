@@ -31,7 +31,7 @@ def parse_duration(text: str) -> int:
     match = _DURATION_RE.match(text.strip())
     if not match:
         raise DurationError(
-            "Неверный формат срока. Примеры: 30s, 45m, 2h, 3d"
+            "Неверный формат срока. Примеры: 90s, 45m, 2h, 3d"
         )
     seconds = int(match.group(1)) * _UNITS[match.group(2).lower()]
     if not MIN_BAN_SECONDS <= seconds <= MAX_BAN_SECONDS:
@@ -72,12 +72,15 @@ class SettingsStore:
     def get(self, chat_id: int) -> ChatSettings:
         return self._settings.get(chat_id, ChatSettings())
 
-    def set(self, chat_id: int, settings: ChatSettings) -> None:
+    def set(self, chat_id: int, settings: ChatSettings) -> bool:
+        """Returns False when the new value could not be persisted to disk."""
         self._settings[chat_id] = settings
         try:
             self._save()
         except OSError as e:
             logger.error("Cannot persist settings to %s: %s", self._path, e)
+            return False
+        return True
 
     def _load(self) -> Dict[int, ChatSettings]:
         try:

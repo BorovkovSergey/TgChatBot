@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import CommandObject
 from aiogram.types import (
     Chat,
@@ -18,6 +18,7 @@ from bot.handlers import (
     LEFT_VOLUNTARILY,
     _is_admin,
     cmd_bantime,
+    cmd_start,
     cmd_status,
     on_member_left,
 )
@@ -162,6 +163,33 @@ class TestOnMemberLeft:
         bot.send_message.side_effect = API_ERROR
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
 
+    def test_ban_retried_after_flood_limit(self, tmp_path):
+        bot = AsyncMock()
+        flood = TelegramRetryAfter(method=None, message="flood", retry_after=0)
+        bot.ban_chat_member.side_effect = [flood, None]
+        asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
+        assert bot.ban_chat_member.await_count == 2
+        assert "Забанен" in bot.send_message.await_args.args[1]
+
+    def test_ban_retry_failure_announced(self, tmp_path):
+        bot = AsyncMock()
+        flood = TelegramRetryAfter(method=None, message="flood", retry_after=0)
+        bot.ban_chat_member.side_effect = [flood, flood]
+        asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
+        assert bot.ban_chat_member.await_count == 2
+        assert "Не смог забанить" in bot.send_message.await_args.args[1]
+
+
+class TestPrivateStart:
+    def test_start_points_to_group_setup(self):
+        bot = AsyncMock()
+        private_chat = Chat(id=42, type="private")
+        message = Message(
+            message_id=1, date=DATE, chat=private_chat, from_user=USER, text="/start"
+        ).as_(bot)
+        asyncio.run(cmd_start(message))
+        assert "групп" in sent_text(bot)
+
 
 class TestIsAdmin:
     def test_owner_is_admin(self):
@@ -209,6 +237,28 @@ class TestCommands:
         command = CommandObject(command="bantime", args="2h")
         asyncio.run(cmd_bantime(message, command, bot, store))
         assert store.get(CHAT.id).ban_seconds == 7200
+
+    def test_reply_failure_does_not_raise(self, tmp_path):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = ADMIN
+        bot.side_effect = API_ERROR  # every bound-method call fails
+        message = make_message().as_(bot)
+        asyncio.run(cmd_status(message, bot, make_store(tmp_path)))
+
+    def test_bantime_warns_when_save_fails(self, tmp_path):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = ADMIN
+        store = make_store(tmp_path)
+        tmp_path.chmod(0o500)
+        try:
+            message = make_message().as_(bot)
+            command = CommandObject(command="bantime", args="2h")
+            asyncio.run(cmd_bantime(message, command, bot, store))
+            text = sent_text(bot)
+            assert "Срок бана установлен" in text
+            assert "не сохранил" in text.lower()
+        finally:
+            tmp_path.chmod(0o700)
 
     def test_bantime_rejects_bad_duration(self, tmp_path):
         bot = AsyncMock()

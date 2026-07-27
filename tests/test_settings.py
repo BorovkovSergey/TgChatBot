@@ -16,7 +16,7 @@ class TestDefaults:
 class TestPersistence:
     def test_set_then_get(self, tmp_path):
         store = make_store(tmp_path)
-        store.set(-100123, ChatSettings(ban_seconds=3600))
+        assert store.set(-100123, ChatSettings(ban_seconds=3600)) is True
         assert store.get(-100123) == ChatSettings(ban_seconds=3600)
 
     def test_survives_reload(self, tmp_path):
@@ -81,7 +81,7 @@ class TestPersistence:
         store = make_store(tmp_path)
         tmp_path.chmod(0o500)
         try:
-            store.set(-1, ChatSettings(ban_seconds=3600))
+            assert store.set(-1, ChatSettings(ban_seconds=3600)) is False
             assert store.get(-1).ban_seconds == 3600
         finally:
             tmp_path.chmod(0o700)
