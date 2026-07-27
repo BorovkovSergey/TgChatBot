@@ -21,7 +21,10 @@ rsync -az Dockerfile docker-compose.yml requirements.txt "$REMOTE:$REMOTE_DIR/"
 echo "==> Building image"
 ssh "$REMOTE" "cd $REMOTE_DIR && $DOCKER compose build --pull"
 
-if ! ssh "$REMOTE" "test -f $REMOTE_DIR/.env"; then
+# Distinguish "file missing" from "ssh failed": the command itself always
+# succeeds, set -e aborts only on a transport error.
+env_state=$(ssh "$REMOTE" "if test -f $REMOTE_DIR/.env; then echo present; else echo missing; fi")
+if [[ "$env_state" == "missing" ]]; then
     if [[ -f .env ]]; then
         echo "==> Copying local .env to the VPS"
         rsync -az .env "$REMOTE:$REMOTE_DIR/.env"
@@ -34,6 +37,10 @@ fi
 
 echo "==> Starting"
 ssh "$REMOTE" "cd $REMOTE_DIR && $DOCKER compose up -d"
+
+# Drop dangling (untagged) image layers left behind by rebuilds. Does not
+# touch tagged or in-use images of other projects.
+ssh "$REMOTE" "$DOCKER image prune -f >/dev/null"
 
 echo "==> Status"
 ssh "$REMOTE" "cd $REMOTE_DIR && $DOCKER compose ps"

@@ -31,6 +31,13 @@ router.message.filter(F.chat.type.in_(_GROUPS))
 router.chat_member.filter(F.chat.type.in_(_GROUPS))
 
 
+async def _announce(bot: Bot, chat_id: int, text: str) -> None:
+    try:
+        await bot.send_message(chat_id, text)
+    except TelegramAPIError as e:
+        logger.warning("Failed to announce in chat %s: %s", chat_id, e)
+
+
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id, user_id)
@@ -49,11 +56,11 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
         ChatMemberStatus.ADMINISTRATOR,
         ChatMemberStatus.CREATOR,
     ):
-        text = f"{user.mention_html()} вышел из чата (был админом — без бана)."
-        try:
-            await bot.send_message(event.chat.id, text)
-        except TelegramAPIError as e:
-            logger.warning("Failed to announce in chat %s: %s", event.chat.id, e)
+        await _announce(
+            bot,
+            event.chat.id,
+            f"{user.mention_html()} вышел из чата (был админом — без бана).",
+        )
         return
     ban_seconds = store.get(event.chat.id).ban_seconds
     try:
@@ -71,19 +78,16 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
             f"{user.mention_html()} вышел из чата. "
             f"Забанен на {format_duration(ban_seconds)}."
         )
-    try:
-        await bot.send_message(event.chat.id, text)
-    except TelegramAPIError as e:
-        logger.warning("Failed to announce in chat %s: %s", event.chat.id, e)
+    await _announce(bot, event.chat.id, text)
 
 
 async def _require_admin(message: Message, bot: Bot) -> bool:
     # Anonymous chat admins post on behalf of the chat itself.
     if message.sender_chat is not None and message.sender_chat.id == message.chat.id:
         return True
-    if message.from_user is None:
-        return False
-    if not await _is_admin(bot, message.chat.id, message.from_user.id):
+    if message.from_user is None or not await _is_admin(
+        bot, message.chat.id, message.from_user.id
+    ):
         await message.reply("Команда только для админов.")
         return False
     return True

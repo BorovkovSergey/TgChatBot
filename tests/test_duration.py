@@ -7,7 +7,7 @@ class TestParseDuration:
     @pytest.mark.parametrize(
         "text,expected",
         [
-            ("30s", 30),
+            ("60s", 60),
             ("45m", 45 * 60),
             ("2h", 2 * 3600),
             ("3d", 3 * 86400),
@@ -24,9 +24,11 @@ class TestParseDuration:
         with pytest.raises(DurationError):
             parse_duration(text)
 
-    def test_below_telegram_minimum(self):
+    def test_below_minimum(self):
+        # 60s floor: Telegram turns sub-30s bans into permanent ones, and
+        # latency/clock skew can eat the margin near the boundary
         with pytest.raises(DurationError):
-            parse_duration("29s")
+            parse_duration("59s")
 
     def test_above_telegram_maximum(self):
         with pytest.raises(DurationError):

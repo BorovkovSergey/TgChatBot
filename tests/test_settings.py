@@ -1,3 +1,5 @@
+import pytest
+
 from bot.settings import ChatSettings, SettingsStore
 
 
@@ -56,6 +58,18 @@ class TestPersistence:
         path = tmp_path / "settings.json"
         path.write_text('{"-1": {"ban_seconds": 5}}')
         assert SettingsStore(path).get(-1).ban_seconds == 86400
+
+    @pytest.mark.parametrize("value", ["3600.5", "true", '"3600"'])
+    def test_non_int_ban_seconds_ignored(self, tmp_path, value):
+        path = tmp_path / "settings.json"
+        path.write_text('{"-1": {"ban_seconds": %s}}' % value)
+        assert SettingsStore(path).get(-1).ban_seconds == 86400
+
+    def test_stale_tmp_files_cleaned_on_start(self, tmp_path):
+        stale = tmp_path / "tmpabc123.tmp"
+        stale.write_text("{}")
+        make_store(tmp_path)
+        assert not stale.exists()
 
     def test_save_failure_keeps_memory_and_does_not_raise(self, tmp_path):
         store = make_store(tmp_path)

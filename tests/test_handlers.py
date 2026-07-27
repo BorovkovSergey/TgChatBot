@@ -38,9 +38,9 @@ def leave_event(user=USER):
     )
 
 
-def make_message(sender_chat=None):
+def make_message(sender_chat=None, from_user=USER):
     return Message(
-        message_id=1, date=DATE, chat=CHAT, from_user=USER, sender_chat=sender_chat
+        message_id=1, date=DATE, chat=CHAT, from_user=from_user, sender_chat=sender_chat
     )
 
 
@@ -73,6 +73,35 @@ class TestOnMemberLeft:
         text = bot.send_message.await_args.args[1]
         assert "Не смог забанить" in text
         assert "Not enough rights" not in text  # raw API details stay in logs
+
+    def test_leaving_restricted_member_banned(self, tmp_path):
+        from aiogram.types import ChatMemberRestricted
+
+        bot = AsyncMock()
+        restricted = ChatMemberRestricted.model_construct(
+            user=USER, status="restricted", is_member=True
+        )
+        event = ChatMemberUpdated(
+            chat=CHAT,
+            from_user=USER,
+            date=DATE,
+            old_chat_member=restricted,
+            new_chat_member=ChatMemberLeft(user=USER),
+        )
+        asyncio.run(on_member_left(event, bot, make_store(tmp_path)))
+        bot.ban_chat_member.assert_awaited_once()
+
+    def test_custom_ban_duration_used(self, tmp_path):
+        from bot.settings import ChatSettings
+
+        bot = AsyncMock()
+        store = make_store(tmp_path)
+        store.set(CHAT.id, ChatSettings(ban_seconds=3600))
+        asyncio.run(on_member_left(leave_event(), bot, store))
+        bot.ban_chat_member.assert_awaited_once_with(
+            CHAT.id, USER.id, until_date=timedelta(seconds=3600)
+        )
+        assert "Забанен на 1h" in bot.send_message.await_args.args[1]
 
     def test_leaving_admin_not_banned(self, tmp_path):
         bot = AsyncMock()
@@ -117,6 +146,12 @@ class TestCommands:
         bot = AsyncMock()
         bot.get_chat_member.return_value = ChatMemberMember(user=USER)
         message = make_message().as_(bot)
+        asyncio.run(cmd_status(message, bot, make_store(tmp_path)))
+        assert "только для админов" in sent_text(bot)
+
+    def test_message_without_user_rejected_with_reply(self, tmp_path):
+        bot = AsyncMock()
+        message = make_message(from_user=None).as_(bot)
         asyncio.run(cmd_status(message, bot, make_store(tmp_path)))
         assert "только для админов" in sent_text(bot)
 

@@ -11,8 +11,10 @@ from typing import Dict, Union
 
 logger = logging.getLogger(__name__)
 
-# Telegram treats until_date outside this range as a permanent ban.
-MIN_BAN_SECONDS = 30
+# Telegram treats until_date outside 30s..366d as a permanent ban. The floor
+# is 60s: near 30s, network latency and clock skew between the host and
+# Telegram can push until_date under the limit and make the ban permanent.
+MIN_BAN_SECONDS = 60
 MAX_BAN_SECONDS = 366 * 86400
 
 DEFAULT_BAN_SECONDS = 86400
@@ -33,7 +35,7 @@ def parse_duration(text: str) -> int:
         )
     seconds = int(match.group(1)) * _UNITS[match.group(2).lower()]
     if not MIN_BAN_SECONDS <= seconds <= MAX_BAN_SECONDS:
-        raise DurationError("Срок должен быть от 30 секунд до 366 дней")
+        raise DurationError("Срок должен быть от 1 минуты до 366 дней")
     return seconds
 
 
@@ -54,7 +56,18 @@ class ChatSettings:
 class SettingsStore:
     def __init__(self, path: Union[str, "os.PathLike[str]"]):
         self._path = Path(path)
+        self._cleanup_stale_tmp()
         self._settings: Dict[int, ChatSettings] = self._load()
+
+    def _cleanup_stale_tmp(self) -> None:
+        # Leftovers from _save() interrupted between mkstemp and os.replace.
+        if not self._path.parent.is_dir():
+            return
+        for stale in self._path.parent.glob("tmp*.tmp"):
+            try:
+                stale.unlink()
+            except OSError as e:
+                logger.warning("Cannot remove stale %s: %s", stale, e)
 
     def get(self, chat_id: int) -> ChatSettings:
         return self._settings.get(chat_id, ChatSettings())
@@ -93,6 +106,10 @@ class SettingsStore:
         for chat_id, data in raw.items():
             try:
                 entry = ChatSettings(**data)
+                if isinstance(entry.ban_seconds, bool) or not isinstance(
+                    entry.ban_seconds, int
+                ):
+                    raise ValueError(f"ban_seconds {entry.ban_seconds!r} is not int")
                 if not MIN_BAN_SECONDS <= entry.ban_seconds <= MAX_BAN_SECONDS:
                     raise ValueError(f"ban_seconds {entry.ban_seconds!r} out of range")
                 settings[int(chat_id)] = entry
