@@ -1,66 +1,66 @@
-# Дизайн: бот бана вышедших из чата
+# Design: leave-ban bot for a group chat
 
-Дата: 2026-07-27. Статус: утверждён.
+Date: 2026-07-27. Status: approved.
 
-> **Изменение 2026-07-27:** режим `manual` (кнопки) удалён по решению пользователя — бот работает только в режиме автобана. Причина: manual в любом случае требовал боту право Ban users (бан по кнопке выполняет бот), выгода режима не оправдалась. Команда `/banmode` и callback-обработчики убраны. Разделы ниже описывают исходный дизайн.
+> **Change 2026-07-27:** the `manual` mode (inline buttons) was removed by the user's decision — the bot works in auto-ban mode only. Reason: manual mode still required the Ban users right for the bot (the button-triggered ban is executed by the bot), so the mode brought no permission benefit. The `/banmode` command and callback handlers were removed. The sections below describe the original design.
 
-## Задача
+## Problem
 
-Telegram-бот для группового чата: отслеживает добровольно вышедших участников и временно банит их, чтобы они не могли сразу вернуться. Срок бана настраивается командой в чате. Два режима работы:
+A Telegram bot for a group chat: track members who leave voluntarily and temporarily ban them so they cannot rejoin immediately. The ban duration is configurable via a chat command. Two modes:
 
-- `auto` — бан сразу при выходе;
-- `manual` — бот постит сообщение «пользователь вышел» с inline-кнопкой, бан выполняется после нажатия админом.
+- `auto` — ban immediately on leave;
+- `manual` — the bot posts a "user left" message with an inline button, the ban is executed after an admin presses it.
 
-## Ключевые факты Telegram Bot API
+## Key Telegram Bot API facts
 
-- Апдейты `chat_member` о других пользователях бот получает **только будучи админом чата**. Сервисное сообщение `left_chat_member` в группах 50+ участников не приходит. Следовательно, админка нужна в обоих режимах.
-- Бан выполняет сам бот через `banChatMember`, поэтому нужно право `can_restrict_members` (Ban users) — даже в режиме `manual`: админ лишь подтверждает, действие делает бот.
-- `banChatMember(until_date=...)`: Telegram автоматически разбанивает по истечении срока. Своя база банов и планировщик не нужны. Срок вне диапазона 30 секунд…366 дней трактуется как вечный бан — валидируем.
-- Добровольный выход = переход статуса в `left`. Переход в `kicked` означает, что участника забанил админ — игнорируем.
-- Кнопки (inline keyboard + `callback_query`) надёжнее реакций: видно, кто нажал, легко проверить админство. Реакции отвергнуты.
+- The bot receives `chat_member` updates about other users **only while it is a chat admin**. The `left_chat_member` service message is not delivered in groups of 50+ members. Hence admin status is required in both modes.
+- The ban is executed by the bot itself via `banChatMember`, which requires the `can_restrict_members` (Ban users) right — even in `manual` mode: the admin only confirms, the bot acts.
+- `banChatMember(until_date=...)`: Telegram lifts the ban automatically when it expires. No own ban database or scheduler is needed. A duration outside 30 seconds…366 days is treated as a permanent ban — validated.
+- A voluntary leave is a status transition to `left`. A transition to `kicked` means an admin banned the member — ignored.
+- Buttons (inline keyboard + `callback_query`) are more reliable than reactions: the presser is known, admin status is easy to check. Reactions were rejected.
 
-## Решения
+## Decisions
 
-| Вопрос | Решение |
+| Question | Decision |
 |---|---|
-| Стек | Python 3.12 + aiogram 3.x |
-| Доставка апдейтов | Long polling (`allowed_updates=["message", "chat_member", "callback_query"]`) |
-| Деплой | Docker + docker-compose, `restart: unless-stopped` |
-| Настройки | JSON-файл per-chat (`data/settings.json`), volume; SQLite — оверкилл |
-| Дефолты | Режим `manual`, срок бана 24h |
+| Stack | Python 3.12 + aiogram 3.x |
+| Update delivery | Long polling (`allowed_updates=["message", "chat_member", "callback_query"]`) |
+| Deployment | Docker + docker-compose, `restart: unless-stopped` |
+| Settings | Per-chat JSON file (`data/settings.json`), volume; SQLite is overkill |
+| Defaults | `manual` mode, 24h duration |
 
-## Поведение
+## Behavior
 
-### Выход участника (`ChatMemberUpdated`, только группы/супергруппы)
+### Member leaves (`ChatMemberUpdated`, groups/supergroups only)
 
-- `auto`: `ban_chat_member(until_date=now+ban_seconds)`, сообщение в чат «X вышел, забанен на N».
-- `manual`: сообщение «X вышел из чата» с кнопками «Забанить на N» / «Пропустить» (`user_id` в `callback_data`).
+- `auto`: `ban_chat_member(until_date=now+duration)`, chat message "X left, banned for N".
+- `manual`: message "X left the chat" with "Ban for N" / "Skip" buttons (`user_id` in `callback_data`).
 
-### Кнопки
+### Buttons
 
-Нажавший проверяется через `get_chat_member` — статус `administrator`/`creator`. Не админ — alert «не для тебя». «Забанить» — бан и edit сообщения «Забанен (админ Y)». «Пропустить» — edit «Пропущен».
+The presser is checked via `get_chat_member` — status `administrator`/`creator`. Non-admins get an alert. "Ban" — ban and edit the message to "Banned (admin Y)". "Skip" — edit to "Skipped".
 
-### Команды (только админы)
+### Commands (admins only)
 
-- `/banmode auto|manual` — режим;
-- `/bantime 30m|2h|3d` — срок бана (валидация 30 сек…366 дней);
-- `/status` — текущие настройки.
+- `/banmode auto|manual` — mode;
+- `/bantime 30m|2h|3d` — ban duration (validated 30s…366d);
+- `/status` — current settings.
 
-### Ошибки
+### Errors
 
-Ошибки API (нет прав, цель — админ) — понятное сообщение в чат, бот не падает.
+API errors (missing rights, target is an admin) — a clear chat message, the bot does not crash.
 
-## Структура
+## Layout
 
 ```
-bot/main.py      # запуск, allowed_updates, polling
-bot/handlers.py  # chat_member, команды, callback
-bot/settings.py  # ChatSettings, SettingsStore (JSON, атомарная запись), parse/format duration
-tests/           # юниты на settings и duration
+bot/main.py      # startup, allowed_updates, polling
+bot/handlers.py  # chat_member, commands, callbacks
+bot/settings.py  # ChatSettings, SettingsStore (JSON, atomic writes), parse/format duration
+tests/           # unit tests for settings and duration
 Dockerfile, docker-compose.yml, requirements.txt, .env.example, README.md
 ```
 
-## Тестирование
+## Testing
 
-- pytest-юниты: `parse_duration`/`format_duration` (границы 30s/366d, ошибки), round-trip `SettingsStore`, дефолты.
-- Живой тест в тестовом чате: manual-кнопка, автобан, смена настроек, сохранность после рестарта контейнера.
+- pytest units: `parse_duration`/`format_duration` (30s/366d boundaries, errors), `SettingsStore` round-trip, defaults.
+- Live test in a sandbox chat: manual button, auto-ban, settings changes, persistence across container restarts.
