@@ -16,11 +16,10 @@ echo "==> Syncing sources to $REMOTE:$REMOTE_DIR"
 # root-owned and the non-root container user cannot write settings
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR/data"
 rsync -az --delete --exclude '__pycache__' bot "$REMOTE:$REMOTE_DIR/"
-rsync -az Dockerfile docker-compose.yml requirements.txt "$REMOTE:$REMOTE_DIR/"
+rsync -az Dockerfile docker-compose.yml requirements.lock "$REMOTE:$REMOTE_DIR/"
 
-echo "==> Building image"
-ssh "$REMOTE" "cd $REMOTE_DIR && $DOCKER compose build --pull"
-
+# .env must exist before any compose command: compose validates env_file
+# while loading the config, so even `build` fails without it.
 # Distinguish "file missing" from "ssh failed": the command itself always
 # succeeds, set -e aborts only on a transport error.
 env_state=$(ssh "$REMOTE" "if test -f $REMOTE_DIR/.env; then echo present; else echo missing; fi")
@@ -34,6 +33,9 @@ if [[ "$env_state" == "missing" ]]; then
         exit 1
     fi
 fi
+
+echo "==> Building image"
+ssh "$REMOTE" "cd $REMOTE_DIR && $DOCKER compose build --pull"
 
 echo "==> Starting"
 ssh "$REMOTE" "cd $REMOTE_DIR && $DOCKER compose up -d"

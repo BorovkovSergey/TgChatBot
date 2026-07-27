@@ -80,6 +80,23 @@ class TestPersistence:
         finally:
             tmp_path.chmod(0o700)
 
+    def test_save_failure_not_masked_by_cleanup_failure(self, tmp_path, monkeypatch):
+        import bot.settings as settings_module
+
+        store = make_store(tmp_path)
+
+        def fail_replace(*args):
+            raise PermissionError("disk full")
+
+        def fail_unlink(*args):
+            raise OSError("cleanup failed")
+
+        monkeypatch.setattr(settings_module.os, "replace", fail_replace)
+        monkeypatch.setattr(settings_module.os, "unlink", fail_unlink)
+        store._settings[-1] = ChatSettings(ban_seconds=3600)
+        with pytest.raises(PermissionError, match="disk full"):
+            store._save()
+
     def test_corrupt_file_backed_up(self, tmp_path):
         path = tmp_path / "settings.json"
         path.write_text("{not json")

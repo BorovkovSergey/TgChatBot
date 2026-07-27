@@ -122,11 +122,25 @@ class SettingsStore:
         data = {str(chat_id): asdict(s) for chat_id, s in self._settings.items()}
         fd, tmp = tempfile.mkstemp(dir=self._path.parent, suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as f:
+            f = os.fdopen(fd, "w")
+        except BaseException:
+            os.close(fd)
+            self._discard(tmp)
+            raise
+        try:
+            with f:
                 json.dump(data, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp, self._path)
         except BaseException:
-            os.unlink(tmp)
+            self._discard(tmp)
             raise
+
+    @staticmethod
+    def _discard(tmp: str) -> None:
+        # Cleanup must not mask the original _save error.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
