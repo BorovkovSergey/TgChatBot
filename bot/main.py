@@ -8,6 +8,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators
 
 from bot.handlers import router
 from bot.settings import SettingsStore
@@ -26,6 +27,14 @@ async def main() -> None:
     bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(store=store)
     dp.include_router(router)
+
+    await bot.set_my_commands(
+        [
+            BotCommand(command="bantime", description="Срок бана: 30m, 2h, 3d"),
+            BotCommand(command="status", description="Текущие настройки"),
+        ],
+        scope=BotCommandScopeAllChatAdministrators(),
+    )
 
     # Without "chat_member" in allowed_updates Telegram never delivers
     # member-leave events, even to an admin bot.
