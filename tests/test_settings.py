@@ -66,10 +66,16 @@ class TestPersistence:
         assert SettingsStore(path).get(-1).ban_seconds == 86400
 
     def test_stale_tmp_files_cleaned_on_start(self, tmp_path):
-        stale = tmp_path / "tmpabc123.tmp"
+        stale = tmp_path / "settings-abc123.tmp"
         stale.write_text("{}")
         make_store(tmp_path)
         assert not stale.exists()
+
+    def test_foreign_tmp_files_untouched(self, tmp_path):
+        foreign = tmp_path / "tmpother.tmp"
+        foreign.write_text("{}")
+        make_store(tmp_path)
+        assert foreign.exists()
 
     def test_save_failure_keeps_memory_and_does_not_raise(self, tmp_path):
         store = make_store(tmp_path)

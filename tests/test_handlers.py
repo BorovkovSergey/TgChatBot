@@ -14,7 +14,13 @@ from aiogram.types import (
     User,
 )
 
-from bot.handlers import _is_admin, cmd_bantime, cmd_status, on_member_left
+from bot.handlers import (
+    LEFT_VOLUNTARILY,
+    _is_admin,
+    cmd_bantime,
+    cmd_status,
+    on_member_left,
+)
 from bot.settings import SettingsStore
 
 DATE = datetime(2026, 1, 1)
@@ -47,6 +53,39 @@ def make_message(sender_chat=None, from_user=USER):
 def sent_text(bot):
     method = bot.await_args.args[0]
     return method.text
+
+
+def restricted(is_member):
+    from aiogram.types import ChatMemberRestricted
+
+    return ChatMemberRestricted.model_construct(
+        user=USER, status="restricted", is_member=is_member
+    )
+
+
+class TestLeaveFilter:
+    def matches(self, old, new):
+        event = ChatMemberUpdated(
+            chat=CHAT, from_user=USER, date=DATE, old_chat_member=old, new_chat_member=new
+        )
+        return asyncio.run(LEFT_VOLUNTARILY(event))
+
+    def test_member_left_matches(self):
+        assert self.matches(ChatMemberMember(user=USER), ChatMemberLeft(user=USER))
+
+    def test_restricted_member_leaving_matches(self):
+        # A muted user who leaves keeps status "restricted", only
+        # is_member flips to False — Telegram never sends "left" here.
+        assert self.matches(restricted(True), restricted(False))
+
+    def test_kick_does_not_match(self):
+        from aiogram.types import ChatMemberBanned
+
+        banned = ChatMemberBanned(user=USER, until_date=DATE)
+        assert not self.matches(ChatMemberMember(user=USER), banned)
+
+    def test_mute_does_not_match(self):
+        assert not self.matches(ChatMemberMember(user=USER), restricted(True))
 
 
 class TestOnMemberLeft:

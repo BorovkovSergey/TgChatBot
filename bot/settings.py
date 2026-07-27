@@ -63,7 +63,7 @@ class SettingsStore:
         # Leftovers from _save() interrupted between mkstemp and os.replace.
         if not self._path.parent.is_dir():
             return
-        for stale in self._path.parent.glob("tmp*.tmp"):
+        for stale in self._path.parent.glob("settings-*.tmp"):
             try:
                 stale.unlink()
             except OSError as e:
@@ -120,7 +120,11 @@ class SettingsStore:
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         data = {str(chat_id): asdict(s) for chat_id, s in self._settings.items()}
-        fd, tmp = tempfile.mkstemp(dir=self._path.parent, suffix=".tmp")
+        # Own prefix so startup cleanup never touches foreign temp files if
+        # SETTINGS_PATH ever points into a shared directory.
+        fd, tmp = tempfile.mkstemp(
+            dir=self._path.parent, prefix="settings-", suffix=".tmp"
+        )
         try:
             f = os.fdopen(fd, "w")
         except BaseException:

@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import (
     IS_MEMBER,
     LEFT,
+    RESTRICTED,
     ChatMemberUpdatedFilter,
     Command,
     CommandObject,
@@ -47,7 +48,13 @@ async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR)
 
 
-@router.chat_member(ChatMemberUpdatedFilter(IS_MEMBER >> LEFT))
+# A restricted (muted) user who leaves keeps status "restricted" with
+# is_member=False instead of "left", hence -RESTRICTED. "kicked" stays
+# excluded: the admin already banned that user.
+LEFT_VOLUNTARILY = ChatMemberUpdatedFilter(IS_MEMBER >> (LEFT | -RESTRICTED))
+
+
+@router.chat_member(LEFT_VOLUNTARILY)
 async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStore) -> None:
     user: User = event.old_chat_member.user
     if user.is_bot:

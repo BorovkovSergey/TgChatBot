@@ -18,6 +18,8 @@ ssh "$REMOTE" "mkdir -p $REMOTE_DIR/data"
 rsync -az --delete --exclude '__pycache__' bot "$REMOTE:$REMOTE_DIR/"
 rsync -az Dockerfile docker-compose.yml requirements.lock "$REMOTE:$REMOTE_DIR/"
 
+# The VPS .env is the source of truth: a local .env is copied ONCE as a
+# bootstrap and never synced afterwards — edit the token on the VPS.
 # .env must exist before any compose command: compose validates env_file
 # while loading the config, so even `build` fails without it.
 # Distinguish "file missing" from "ssh failed": the command itself always
