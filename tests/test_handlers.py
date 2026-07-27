@@ -163,21 +163,42 @@ class TestOnMemberLeft:
         bot.send_message.side_effect = API_ERROR
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
 
-    def test_ban_retried_after_flood_limit(self, tmp_path):
+    def _patch_sleep(self, monkeypatch):
+        sleeps = []
+
+        async def fake_sleep(delay):
+            sleeps.append(delay)
+
+        monkeypatch.setattr("bot.handlers.asyncio.sleep", fake_sleep)
+        return sleeps
+
+    def test_ban_retried_after_flood_limit(self, tmp_path, monkeypatch):
+        self._patch_sleep(monkeypatch)
         bot = AsyncMock()
-        flood = TelegramRetryAfter(method=None, message="flood", retry_after=0)
+        flood = TelegramRetryAfter(method=None, message="flood", retry_after=1)
         bot.ban_chat_member.side_effect = [flood, None]
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
         assert bot.ban_chat_member.await_count == 2
         assert "бан на" in bot.send_message.await_args.args[1]
 
-    def test_ban_retry_failure_announced(self, tmp_path):
+    def test_ban_retry_failure_announced(self, tmp_path, monkeypatch):
+        self._patch_sleep(monkeypatch)
         bot = AsyncMock()
-        flood = TelegramRetryAfter(method=None, message="flood", retry_after=0)
+        flood = TelegramRetryAfter(method=None, message="flood", retry_after=1)
         bot.ban_chat_member.side_effect = [flood, flood]
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
         assert bot.ban_chat_member.await_count == 2
         assert "Не смог забанить" in bot.send_message.await_args.args[1]
+
+    def test_ban_retry_sleep_capped_with_jitter(self, tmp_path, monkeypatch):
+        # N parallel handlers must not retry in lockstep with a huge delay
+        sleeps = self._patch_sleep(monkeypatch)
+        bot = AsyncMock()
+        flood = TelegramRetryAfter(method=None, message="flood", retry_after=500)
+        bot.ban_chat_member.side_effect = [flood, None]
+        asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
+        assert sleeps
+        assert 60 <= sleeps[0] <= 61
 
 
 class TestMigration:
@@ -196,6 +217,21 @@ class TestMigration:
         )
         asyncio.run(on_migrate(message, store))
         assert store.get(-100999).ban_seconds == 3600
+        assert CHAT.id not in store._settings
+
+    def test_migration_noop_without_settings(self, tmp_path):
+        from bot.handlers import on_migrate
+
+        store = make_store(tmp_path)
+        message = Message(
+            message_id=1,
+            date=DATE,
+            chat=CHAT,
+            from_user=USER,
+            migrate_to_chat_id=-100999,
+        )
+        asyncio.run(on_migrate(message, store))
+        assert -100999 not in store._settings
 
 
 class TestPrivateStart:

@@ -29,6 +29,18 @@ class TestPersistence:
         store.set(-1, ChatSettings(ban_seconds=60))
         assert store.get(-2).ban_seconds == 86400
 
+    def test_migrate_moves_entry(self, tmp_path):
+        store = make_store(tmp_path)
+        store.set(-1, ChatSettings(ban_seconds=3600))
+        store.migrate(-1, -2)
+        assert store.get(-2).ban_seconds == 3600
+        assert -1 not in store._settings
+
+    def test_migrate_noop_when_absent(self, tmp_path):
+        store = make_store(tmp_path)
+        store.migrate(-1, -2)
+        assert -2 not in store._settings
+
     def test_creates_parent_dirs(self, tmp_path):
         store = SettingsStore(tmp_path / "nested" / "dir" / "settings.json")
         store.set(-1, ChatSettings(ban_seconds=60))

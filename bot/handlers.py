@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 from dataclasses import replace
 from datetime import timedelta
 
@@ -47,20 +48,28 @@ async def _reply(message: Message, text: str) -> None:
         logger.warning("Failed to reply in chat %s: %s", message.chat.id, e)
 
 
+# Polling handles updates as parallel tasks: on a mass leave every handler
+# would hit flood control, sleep the same retry_after and retry in lockstep.
+# The lock serializes bans, the cap and jitter spread the retries out.
+_ban_lock = asyncio.Lock()
+_RETRY_AFTER_CAP = 60
+
+
 async def _ban_with_retry(bot: Bot, chat_id: int, user_id: int, ban_seconds: int) -> None:
     until = timedelta(seconds=ban_seconds)
-    try:
-        await bot.ban_chat_member(chat_id, user_id, until_date=until)
-    except TelegramRetryAfter as e:
-        # Mass leave hits flood control; one retry after the advised pause.
-        logger.info(
-            "Flood limit banning %s in %s, retrying in %ss",
-            user_id,
-            chat_id,
-            e.retry_after,
-        )
-        await asyncio.sleep(e.retry_after)
-        await bot.ban_chat_member(chat_id, user_id, until_date=until)
+    async with _ban_lock:
+        try:
+            await bot.ban_chat_member(chat_id, user_id, until_date=until)
+        except TelegramRetryAfter as e:
+            delay = min(e.retry_after, _RETRY_AFTER_CAP) + random.uniform(0, 1)
+            logger.info(
+                "Flood limit banning %s in %s, retrying in %.1fs",
+                user_id,
+                chat_id,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            await bot.ban_chat_member(chat_id, user_id, until_date=until)
 
 
 async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
@@ -113,7 +122,7 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
 @router.message(F.migrate_to_chat_id)
 async def on_migrate(message: Message, store: SettingsStore) -> None:
     # Group upgraded to supergroup: chat id changes, carry the settings over.
-    store.set(message.migrate_to_chat_id, store.get(message.chat.id))
+    store.migrate(message.chat.id, message.migrate_to_chat_id)
 
 
 async def _require_admin(message: Message, bot: Bot) -> bool:

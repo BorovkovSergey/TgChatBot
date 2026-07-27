@@ -83,6 +83,13 @@ class SettingsStore:
             return False
         return True
 
+    def migrate(self, old_chat_id: int, new_chat_id: int) -> None:
+        """Move settings when a group is upgraded and its chat id changes."""
+        entry = self._settings.pop(old_chat_id, None)
+        if entry is None:
+            return
+        self.set(new_chat_id, entry)
+
     def _load(self) -> Dict[int, ChatSettings]:
         try:
             text = self._path.read_text()

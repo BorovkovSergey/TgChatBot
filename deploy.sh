@@ -16,7 +16,8 @@ echo "==> Syncing sources to $REMOTE:$REMOTE_DIR"
 # root-owned and the non-root container user cannot write settings
 ssh "$REMOTE" "mkdir -p $REMOTE_DIR/data"
 rsync -az --delete --exclude '__pycache__' bot "$REMOTE:$REMOTE_DIR/"
-rsync -az Dockerfile docker-compose.yml requirements.lock "$REMOTE:$REMOTE_DIR/"
+# .dockerignore keeps data/ and .env out of the remote build context
+rsync -az Dockerfile docker-compose.yml requirements.lock .dockerignore "$REMOTE:$REMOTE_DIR/"
 
 # The VPS .env is the source of truth: a local .env is copied ONCE as a
 # bootstrap and never synced afterwards — edit the token on the VPS.
