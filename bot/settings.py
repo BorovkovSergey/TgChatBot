@@ -12,7 +12,6 @@ from typing import Dict
 MIN_BAN_SECONDS = 30
 MAX_BAN_SECONDS = 366 * 86400
 
-DEFAULT_MODE = "manual"
 DEFAULT_BAN_SECONDS = 86400
 
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -46,7 +45,6 @@ def format_duration(seconds: int) -> str:
 
 @dataclass
 class ChatSettings:
-    mode: str = DEFAULT_MODE  # "auto" | "manual"
     ban_seconds: int = DEFAULT_BAN_SECONDS
 
 

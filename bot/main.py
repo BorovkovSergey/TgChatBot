@@ -29,9 +29,7 @@ async def main() -> None:
 
     # Without "chat_member" in allowed_updates Telegram never delivers
     # member-leave events, even to an admin bot.
-    await dp.start_polling(
-        bot, allowed_updates=["message", "chat_member", "callback_query"]
-    )
+    await dp.start_polling(bot, allowed_updates=["message", "chat_member"])
 
 
 if __name__ == "__main__":
