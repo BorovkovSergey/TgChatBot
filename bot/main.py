@@ -16,6 +16,7 @@ from aiogram.types import (
 )
 
 from bot.handlers import private_router, router
+from bot.session import TolerantSession
 from bot.settings import SettingsStore
 
 
@@ -29,7 +30,13 @@ async def main() -> None:
         sys.exit("BOT_TOKEN environment variable is not set")
 
     store = SettingsStore(os.environ.get("SETTINGS_PATH", "data/settings.json"))
-    bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # TolerantSession: an update this aiogram cannot parse is skipped instead
+    # of wedging polling on the same batch forever
+    bot = Bot(
+        token,
+        session=TolerantSession(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dp = Dispatcher(store=store)
     dp.include_router(router)
     dp.include_router(private_router)
