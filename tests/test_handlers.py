@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -27,23 +27,29 @@ from bot.handlers import (
 )
 from bot.settings import SettingsStore
 
-DATE = datetime(2026, 1, 1)
+DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 CHAT = Chat(id=-100500, type="supergroup")
 USER = User(id=42, is_bot=False, first_name="Vasya")
 ADMIN = ChatMemberOwner(user=USER, is_anonymous=False)
 API_ERROR = TelegramBadRequest(method=None, message="Not enough rights")
 
 
+@pytest.fixture(autouse=True)
+def fixed_now(monkeypatch):
+    # Events dated DATE are fresh unless a test says otherwise
+    monkeypatch.setattr("bot.handlers._now", lambda: DATE)
+
+
 def make_store(tmp_path):
     return SettingsStore(tmp_path / "settings.json")
 
 
-def leave_event(user=USER):
+def leave_event(user=USER, date=DATE, old=None):
     return ChatMemberUpdated(
         chat=CHAT,
         from_user=user,
-        date=DATE,
-        old_chat_member=ChatMemberMember(user=user),
+        date=date,
+        old_chat_member=old or ChatMemberMember(user=user),
         new_chat_member=ChatMemberLeft(user=user),
     )
 
@@ -230,6 +236,77 @@ class TestOnMemberLeft:
         asyncio.run(on_member_left(leave_event(), bot, make_store(tmp_path)))
         assert sleeps
         assert 60 <= sleeps[0] <= 61
+
+
+class TestStaleLeaves:
+    """Leaves replayed from the Telegram queue after the bot was down."""
+
+    @pytest.fixture(autouse=True)
+    def no_debounce(self, monkeypatch):
+        import bot.handlers as h
+
+        monkeypatch.setattr(h, "_STALE_QUIET", 0)
+        yield
+        h._stale_leaves.clear()
+        h._stale_flushers.clear()
+
+    def run(self, events, bot, store):
+        from bot import handlers
+
+        async def go():
+            for event in events:
+                await on_member_left(event, bot, store)
+            await asyncio.gather(*list(handlers._stale_flushers.values()))
+
+        asyncio.run(go())
+
+    def test_repeated_leaves_banned_once_from_last_leave(self, tmp_path):
+        bot = AsyncMock()
+        last = DATE - timedelta(hours=2)
+        events = [
+            leave_event(date=DATE - timedelta(hours=20)),
+            leave_event(date=last),
+            leave_event(date=DATE - timedelta(hours=10)),
+        ]
+        self.run(events, bot, make_store(tmp_path))
+        bot.ban_chat_member.assert_awaited_once_with(
+            CHAT.id, USER.id, until_date=last + timedelta(days=1)
+        )
+        bot.send_message.assert_awaited_once()
+        assert "Vasya" in bot.send_message.await_args.args[1]
+
+    def test_expired_ban_skipped_silently(self, tmp_path):
+        bot = AsyncMock()
+        events = [leave_event(date=DATE - timedelta(hours=25))]
+        self.run(events, bot, make_store(tmp_path))
+        bot.ban_chat_member.assert_not_awaited()
+        bot.send_message.assert_not_awaited()
+
+    def test_several_users_one_summary(self, tmp_path):
+        bot = AsyncMock()
+        petya = User(id=43, is_bot=False, first_name="Petya")
+        stale = DATE - timedelta(hours=1)
+        events = [leave_event(date=stale), leave_event(user=petya, date=stale)]
+        self.run(events, bot, make_store(tmp_path))
+        assert bot.ban_chat_member.await_count == 2
+        bot.send_message.assert_awaited_once()
+        text = bot.send_message.await_args.args[1]
+        assert "Vasya" in text and "Petya" in text
+
+    def test_admin_leave_silent(self, tmp_path):
+        bot = AsyncMock()
+        events = [leave_event(date=DATE - timedelta(hours=1), old=ADMIN)]
+        self.run(events, bot, make_store(tmp_path))
+        bot.ban_chat_member.assert_not_awaited()
+        bot.send_message.assert_not_awaited()
+
+    def test_ban_failure_in_summary(self, tmp_path):
+        bot = AsyncMock()
+        bot.ban_chat_member.side_effect = API_ERROR
+        events = [leave_event(date=DATE - timedelta(hours=1))]
+        self.run(events, bot, make_store(tmp_path))
+        bot.send_message.assert_awaited_once()
+        assert "не смог забанить" in bot.send_message.await_args.args[1]
 
 
 class TestMigration:

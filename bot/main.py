@@ -55,7 +55,8 @@ async def main() -> None:
     # it Telegram never delivers member-leave events, even to an admin bot.
     # Pending updates are deliberately NOT dropped: Telegram queues them for
     # up to 24h, so members who left while the bot was down still get banned
-    # after a restart.
+    # after a restart (once per user, counted from the last leave — see
+    # _queue_stale_leave in handlers).
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 

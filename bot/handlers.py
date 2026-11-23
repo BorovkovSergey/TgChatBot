@@ -5,8 +5,8 @@ import logging
 import random
 from collections import defaultdict
 from dataclasses import replace
-from datetime import timedelta
-from typing import DefaultDict
+from datetime import datetime, timedelta, timezone
+from typing import DefaultDict, Dict, List, Tuple, Union
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
@@ -60,8 +60,9 @@ _ban_locks: DefaultDict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 _RETRY_AFTER_CAP = 60
 
 
-async def _ban_with_retry(bot: Bot, chat_id: int, user_id: int, ban_seconds: int) -> None:
-    until = timedelta(seconds=ban_seconds)
+async def _ban_with_retry(
+    bot: Bot, chat_id: int, user_id: int, until: Union[timedelta, datetime]
+) -> None:
     async with _ban_locks[chat_id]:
         try:
             await bot.ban_chat_member(chat_id, user_id, until_date=until)
@@ -92,10 +93,85 @@ async def _is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
 LEFT_VOLUNTARILY = ChatMemberUpdatedFilter(IS_MEMBER >> (LEFT | -RESTRICTED))
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# Telegram keeps updates queued for up to 24h while the bot is down. Replaying
+# that backlog one event at a time would re-ban a user who left N times N
+# times and post N announcements, all dated "now". Instead stale leaves are
+# collected per chat until the backlog stops arriving, then each user is
+# banned once, counted from their LAST leave, with one summary message.
+_STALE_AFTER = timedelta(minutes=1)
+_STALE_QUIET = 5.0  # seconds without new stale leaves before flushing a chat
+# Telegram treats until_date closer than 30s from now as a permanent ban
+_MIN_BAN_LEFT = timedelta(minutes=1)
+_stale_leaves: Dict[int, Dict[int, Tuple[User, datetime]]] = {}
+_stale_flushers: Dict[int, "asyncio.Task[None]"] = {}
+
+
+def _queue_stale_leave(
+    bot: Bot, chat_id: int, user: User, left_at: datetime, store: SettingsStore
+) -> None:
+    pending = _stale_leaves.setdefault(chat_id, {})
+    known = pending.get(user.id)
+    if known is None or left_at > known[1]:
+        pending[user.id] = (user, left_at)
+    # Debounce: restart the timer on every new stale leave. A flusher that is
+    # already past its sleep has detached its batch, so cancelling only ever
+    # hits one that is still waiting.
+    flusher = _stale_flushers.get(chat_id)
+    if flusher is not None:
+        flusher.cancel()
+    _stale_flushers[chat_id] = asyncio.create_task(
+        _flush_stale_leaves(bot, chat_id, store)
+    )
+
+
+async def _flush_stale_leaves(bot: Bot, chat_id: int, store: SettingsStore) -> None:
+    await asyncio.sleep(_STALE_QUIET)
+    # Detach the batch atomically (no await in between): later stale leaves
+    # start a new batch with a new flusher.
+    pending = _stale_leaves.pop(chat_id, {})
+    if _stale_flushers.get(chat_id) is asyncio.current_task():
+        del _stale_flushers[chat_id]
+    ban = timedelta(seconds=store.get(chat_id).ban_seconds)
+    lines: List[str] = []
+    for user, left_at in pending.values():
+        until = left_at + ban
+        if until - _now() < _MIN_BAN_LEFT:
+            continue  # the ban would already be over
+        try:
+            await _ban_with_retry(bot, chat_id, user.id, until)
+        except TelegramAPIError as e:
+            logger.warning("Failed to ban %s in %s: %s", user.id, chat_id, e)
+            lines.append(
+                f"{user.mention_html()} — не смог забанить, "
+                f"проверь права бота (детали в логах)."
+            )
+        else:
+            lines.append(f"{user.mention_html()} — бан до {until:%d.%m %H:%M} UTC.")
+    if lines:
+        await _announce(
+            bot,
+            chat_id,
+            "Пока бот был недоступен, из чата вышли:\n" + "\n".join(lines),
+        )
+
+
 @router.chat_member(LEFT_VOLUNTARILY)
 async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStore) -> None:
     user: User = event.old_chat_member.user
     if user.is_bot:
+        return
+    if _now() - event.date > _STALE_AFTER:
+        # Admins are never banned and basic groups cannot hold a temporary
+        # ban: a replayed backlog only produces noise for them, skip silently.
+        if event.chat.type != ChatType.GROUP and event.old_chat_member.status not in (
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.CREATOR,
+        ):
+            _queue_stale_leave(bot, event.chat.id, user, event.date, store)
         return
     if event.old_chat_member.status in (
         ChatMemberStatus.ADMINISTRATOR,
@@ -119,7 +195,9 @@ async def on_member_left(event: ChatMemberUpdated, bot: Bot, store: SettingsStor
         return
     ban_seconds = store.get(event.chat.id).ban_seconds
     try:
-        await _ban_with_retry(bot, event.chat.id, user.id, ban_seconds)
+        await _ban_with_retry(
+            bot, event.chat.id, user.id, timedelta(seconds=ban_seconds)
+        )
     except TelegramRetryAfter as e:
         logger.warning("Flood limit banning %s in %s: %s", user.id, event.chat.id, e)
         text = (
